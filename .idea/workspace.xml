@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CMakeRunConfigurationManager" shouldGenerate="true" shouldDeleteObsolete="true">
+    <generated>
+      <config projectName="FFmpegPlayerWithQt" targetName="FFmpegPlayerWithQt_autogen" />
+      <config projectName="FFmpegPlayerWithQt" targetName="FFmpegPlayerWithQt" />
+    </generated>
+  </component>
+  <component name="CMakeSettings" AUTO_RELOAD="true">
+    <configurations>
+      <configuration PROFILE_NAME="Debug" CONFIG_NAME="Debug" />
+    </configurations>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="6fc96eaf-86f7-4a0e-b9ac-c8e06c7484a9" name="Default Changelist" comment="" />
+    <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ClangdSettings">
+    <option name="formatViaClangd" value="false" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="CMakeBuildProfile:Debug" />
+  <component name="OCFindUsagesOptions" text="false" ivars="false" properties="true" derivedClasses="false" />
+  <component name="ProjectId" id="1VTj3rCEAeX5XtFYzpCKypznHho" />
+  <component name="PropertiesComponent">
+    <property name="WebServerToolWindowFactoryState" value="false" />
+    <property name="com.intellij.ide.scratch.LRUPopupBuilder$1/New Scratch File" value="ObjectiveC" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$" />
+    <property name="settings.editor.selected.configurable" value="preferences.keymap" />
+  </component>
+  <component name="RunDashboard">
+    <option name="ruleStates">
+      <list>
+        <RuleState>
+          <option name="name" value="ConfigurationTypeDashboardGroupingRule" />
+        </RuleState>
+        <RuleState>
+          <option name="name" value="StatusDashboardGroupingRule" />
+        </RuleState>
+      </list>
+    </option>
+  </component>
+  <component name="RunManager" selected="CMake Application.FFmpegPlayerWithQt">
+    <configuration name="FFmpegPlayerWithQt" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="FFmpegPlayerWithQt" TARGET_NAME="FFmpegPlayerWithQt" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="FFmpegPlayerWithQt" RUN_TARGET_NAME="FFmpegPlayerWithQt">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="FFmpegPlayerWithQt_autogen" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="FFmpegPlayerWithQt" TARGET_NAME="FFmpegPlayerWithQt_autogen" CONFIG_NAME="Debug">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="CMake Application.FFmpegPlayerWithQt" />
+      <item itemvalue="CMake Application.FFmpegPlayerWithQt_autogen" />
+    </list>
+  </component>
+  <component name="StructureViewFactory">
+    <option name="ACTIVE_ACTIONS" value=",KIND" />
+  </component>
+  <component name="SvnConfiguration">
+    <configuration />
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="6fc96eaf-86f7-4a0e-b9ac-c8e06c7484a9" name="Default Changelist" comment="" />
+      <created>1577283782442</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1577283782442</updated>
+      <workItem from="1577283784406" duration="1946000" />
+      <workItem from="1577286100591" duration="15000" />
+      <workItem from="1577286185118" duration="2334000" />
+      <workItem from="1577979707267" duration="783000" />
+      <workItem from="1578149233328" duration="11024000" />
+      <workItem from="1578492628952" duration="20000" />
+      <workItem from="1578492794793" duration="10561000" />
+      <workItem from="1578752087342" duration="6207000" />
+      <workItem from="1578926589081" duration="8350000" />
+      <workItem from="1579269156593" duration="6323000" />
+      <workItem from="1579656856641" duration="140000" />
+      <workItem from="1579657068750" duration="194000" />
+      <workItem from="1580538832384" duration="1706000" />
+      <workItem from="1580641552573" duration="3448000" />
+      <workItem from="1586447227716" duration="155000" />
+      <workItem from="1586447409402" duration="38000" />
+      <workItem from="1586447481899" duration="467000" />
+      <workItem from="1591799514187" duration="22031000" />
+      <workItem from="1592401783851" duration="608000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="1" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/MediaPlayer.cpp</url>
+          <line>33</line>
+          <option name="timeStamp" value="68" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
+  </component>
+</project>
