@@ -16,3 +16,32 @@ AVDeCode::~AVDeCode() {
         m_avCodecContext= nullptr;
     }
 }
+
+int AVDeCode::init(MeidaStream *stream) {
+    avcodec_parameters_to_context(m_avCodecContext,stream->m_codecPar);
+    AVCodec *codec= avcodec_find_decoder(m_avCodecContext->codec_id);
+
+    auto ret = avcodec_open2(m_avCodecContext,codec,nullptr);
+    if (ret)
+    {
+        printf("open codec error");
+    }
+    return 0;
+}
+
+int AVDeCode::sendPackt(MediaPacket *pkt) {
+    int ret=0;
+    if (pkt == nullptr)
+    {
+        ret = avcodec_send_packet(m_avCodecContext, nullptr);
+    }else
+    {
+        ret = avcodec_send_packet(m_avCodecContext, pkt->m_pakcet);
+    }
+    return ret;
+}
+
+int AVDeCode::receiveFrame(MediaFrame *frame) {
+    auto  ret = avcodec_receive_frame(m_avCodecContext, frame->m_frame);
+    return ret;
+}

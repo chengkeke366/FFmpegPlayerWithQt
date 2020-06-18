@@ -13,9 +13,8 @@ extern "C"
 class MeidaStream {
 public:
 
-private:
-AVStream *m_stream = nullptr;
-int      m_stream_index=-1;
+    AVCodecParameters *m_codecPar = nullptr;
+    int      m_stream_index=-1;
 };
 
 

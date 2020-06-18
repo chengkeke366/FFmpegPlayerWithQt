@@ -25,6 +25,9 @@ public:
 
     int getStreamCount();
     int getStream(MeidaStream *s, int streamId);
+
+    int getAudioStreamIndex();
+    int getVideoStreamIndex();
 private:
     AVFormatContext * m_avFormatContext;
 };

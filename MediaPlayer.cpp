@@ -3,7 +3,11 @@
 //
 #include <stdio.h>
 #include "MediaPlayer.h"
-
+extern  "C"
+{
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+}
 MediaPlayer::MediaPlayer() {
     av_register_all();
     m_avFormatContext  = avformat_alloc_context();
@@ -27,7 +31,7 @@ int MediaPlayer::openFile(const char *filename) {
         avformat_close_input(&m_avFormatContext);
     }
     auto ret = avformat_open_input(&m_avFormatContext,filename, nullptr, nullptr);
-    if (ret != 0)
+    if (ret)
     {
         char buf[1024];
         av_strerror(ret, buf, 1024);
@@ -64,6 +68,18 @@ int MediaPlayer::getStreamCount() {
 
 int MediaPlayer::getStream(MeidaStream *s, int streamId) {
     AVStream *stream = m_avFormatContext->streams[streamId];
+    s->m_stream_index = streamId;
+    avcodec_parameters_copy(s->m_codecPar,stream->codecpar);
+    return 0;
+}
 
+int MediaPlayer::getAudioStreamIndex() {
+    return av_find_best_stream(m_avFormatContext,AVMediaType::AVMEDIA_TYPE_VIDEO,-1,-1, NULL, NULL);
+
+}
+
+int MediaPlayer::getVideoStreamIndex() {
+
+    return  av_find_best_stream(m_avFormatContext, AVMediaType::AVMEDIA_TYPE_VIDEO, -1,-1, NULL, NULL);
     return 0;
 }

@@ -26,7 +26,7 @@ add_executable(FFmpegPlayerWithQt
         widget.cpp
         widget.h
         main.cpp
-        MediaPlayer.cpp MediaPlayer.h MediaPacket.cpp MediaPacket.h AVDeCode.cpp AVDeCode.h MeidaStream.cpp MeidaStream.h)
+        MediaPlayer.cpp MediaPlayer.h MediaPacket.cpp MediaPacket.h AVDeCode.cpp AVDeCode.h MeidaStream.cpp MeidaStream.h MediaFrame.cpp MediaFrame.h)
 
 target_link_libraries(FFmpegPlayerWithQt Qt5::Widgets avformat)
 

@@ -5,8 +5,12 @@
 #ifndef FFMPEGPLAYERWITHQT_AVDECODE_H
 #define FFMPEGPLAYERWITHQT_AVDECODE_H
 
+#include "MediaPacket.h"
+#include "MeidaStream.h"
+#include "MediaFrame.h"
 extern "C"
 {
+#include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 };
 
@@ -16,8 +20,10 @@ public:
     AVDeCode();
     ~AVDeCode();
 
-    //int init()
+    int init(MeidaStream *stream);
 
+    int sendPackt(MediaPacket *pkt);
+    int receiveFrame(MediaFrame *frame);
 private:
     AVCodecContext *m_avCodecContext = nullptr;
 };
