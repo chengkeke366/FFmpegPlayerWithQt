@@ -15,6 +15,14 @@ extern  "C"
 class MediaFrame {
 public:
     AVFrame *m_frame;
+	MediaFrame()
+	{
+		m_frame = av_frame_alloc();
+	}
+	~MediaFrame()
+	{
+		av_frame_free(&m_frame);
+	}
 };
 
 

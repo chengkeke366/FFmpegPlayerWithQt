@@ -10,13 +10,10 @@ MediaPacket::MediaPacket() {
     if (m_pakcet==nullptr)
     {
         printf("av_packet_alloc error\n");
-    }else
-    {
-        printf("av_packet_alloc success\n");
     }
 }
 
 MediaPacket::~MediaPacket() {
-
     av_packet_free(&m_pakcet);
+   // printf("av_packet_free\n");
 }

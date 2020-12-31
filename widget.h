@@ -2,7 +2,6 @@
 #define WIDGET_H
 
 #include <QWidget>
-#include <thread>
 #include "MediaPlayer.h"
 
 QT_BEGIN_NAMESPACE
@@ -18,10 +17,10 @@ public:
     ~Widget();
 
 private slots:
-    void openFile_Slot();
+	void on_openFileBtn_clicked();
+	void on_play_paush_btn_clicked();
 private:
     Ui::Widget *ui;
     MediaPlayer *m_player = nullptr;
-    std::thread  m_playThread;
 };
 #endif // WIDGET_H
