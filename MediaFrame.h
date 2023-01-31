@@ -19,9 +19,11 @@ public:
 	{
 		m_frame = av_frame_alloc();
 	}
+
 	~MediaFrame()
 	{
 		av_frame_free(&m_frame);
+		m_frame = nullptr;
 	}
 };
 

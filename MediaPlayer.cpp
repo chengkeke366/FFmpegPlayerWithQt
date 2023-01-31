@@ -22,6 +22,10 @@ extern  "C"
 #include <chrono>
 
 #define PACKETSIZE     1024*5*10
+
+#define AV_SYNC_THRESHOLD 0.01
+#define AV_NOSYNC_THRESHOLD 10.0
+
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -175,8 +179,11 @@ bool MediaPlayer::start_play(const char* file_name)
 			{
 				printf("Failed to copy %s codec parameters to decoder context\n");
 			}
+			AVDictionary *opts = NULL;
+			//解码后的AVFrame归属调用者，否则属于解码器。属于解码器则在下一次调用解码函数时，则
+			av_dict_set(&opts, "refcounted_frames", "1", 0);
 
-			if ((ret = avcodec_open2(*codecContext, dec, NULL)) < 0) {
+			if ((ret = avcodec_open2(*codecContext, dec, &opts)) < 0) {
 				printf("Failed to open %s codec\n");
 			}
 		}
@@ -214,7 +221,7 @@ bool MediaPlayer::start_play(const char* file_name)
 	spec.callback = NULL;
 	m_currentAudioDeviceId = m_renderReceiveObj->openAudioDevice(&spec);
 
-	m_will_render_audio_time = (double)av_gettime() / 1000000.0;
+	m_theoretical_render_video_time = m_theoretical_render_audio_time = (double)av_gettime() / 1000000.0;//初始化时钟（获取当前系统时间，然后根据pts叠加到该时间上的方式进行同步）
 	//启动线程
 	m_demux_thread = std::thread(&MediaPlayer::demux_thread, this);
 	m_audio_decode_thread = std::thread(&MediaPlayer::audio_decode_thread, this);
@@ -253,7 +260,6 @@ bool MediaPlayer::stop_play()
 
 	if (m_audio_render_thread.joinable())
 	{
-		m_frame_audio_condition_varible.notify_all();
 		m_audio_render_thread.join();
 	}
 	m_audio_frame_queue.clear();
@@ -309,7 +315,6 @@ void MediaPlayer::demux_thread()
 			*/
 			std::lock_guard<std::mutex> locker(m_pkt_video_queue_mutex);
 			m_video_packet_queue.push_back(pkt);
-			printf("【demux_thread】vidoe_condition_variable.notify_one\n");
 			m_pkt_vidoe_condition_variable.notify_one();
 		
 		}
@@ -323,7 +328,6 @@ void MediaPlayer::demux_thread()
 			*/
 			std::lock_guard<std::mutex> locker(m_pkt_audio_queue_mutex);
 			m_audio_packet_queue.push_back(pkt);
-			printf("【demux_thread】audio_condition_variable.notify_one\n");
 			m_pkt_audio_condition_variable.notify_one();
 		}
 	};
@@ -332,23 +336,28 @@ void MediaPlayer::demux_thread()
 	{
 		pauseOrResum();
 
+		//这段需要确保音视频同步后，才能正常工作。否则由于packet不够导致无法正常解码播放
+		printf("video packet queue size: %d, video frame queue size:%d, audio packet queue size:%d,audio frame queue size :%d\n",
+			m_video_packet_queue.size(), m_video_frame_queue.size(), m_audio_packet_queue.size(), m_audio_frame_queue.size());
+		
 		{
 			std::lock_guard <std::mutex>locker(m_pkt_video_queue_mutex);
-			if (m_video_packet_queue.size() > 5)
-			{
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-				continue;
-			}
-		}
-		{
-			std::lock_guard <std::mutex>locker(m_pkt_audio_queue_mutex);
-			if (m_audio_packet_queue.size() > 5)
+			if (m_video_frame_queue.size() > 0)
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 				continue;
 			}
 		}
 
+		{
+			std::lock_guard <std::mutex>locker(m_pkt_audio_queue_mutex);
+			if (m_audio_frame_queue.size() > 0)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				continue;
+			}
+		}
+		
 		std::shared_ptr <MediaPacket> packet = std::make_shared<MediaPacket>();
 		int result = av_read_frame(m_AVFormatContext, packet->m_pakcet);
 		if (result < 0)
@@ -359,12 +368,6 @@ void MediaPlayer::demux_thread()
 				break;
 			}
 		}
-		/*
-			time_t t = time(0);
-			char ch[64];
-			strftime(ch, sizeof(ch), "%Y-%m-%d %H-%M-%S", localtime(&t)); //年-月-日 时-分-秒
-			printf("Time:%s av_read_frame , the pkt pts is :%lld\n",ch, packet->m_pakcet->pts);
-			*/
 		pushPkt2Queue(packet);
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
@@ -376,14 +379,37 @@ void MediaPlayer::demux_thread()
 
 void MediaPlayer::audio_decode_thread()
 {
+
+	//deal audio decode	
+	auto decode = [this](std::shared_ptr<MediaPacket> audio_pkt) {
+		int complete = 0;
+		do
+		{
+			std::shared_ptr<MediaFrame> media_frame = std::make_shared<MediaFrame>();
+			int ret = avcodec_decode_audio4(m_audio_AVCodecContext, media_frame->m_frame, &complete, audio_pkt->m_pakcet);
+			if (ret < 0)
+			{
+				break;
+			}
+			if (complete)
+			{
+				std::unique_lock<std::mutex> locker(m_audio_frame_queue_mutex);
+				m_audio_frame_queue.push_back(media_frame);
+			}
+			audio_pkt->m_pakcet->size = audio_pkt->m_pakcet->size - ret;
+			audio_pkt->m_pakcet->data = audio_pkt->m_pakcet->data + ret;
+		} while (audio_pkt->m_pakcet->size > 0);
+	};
+
 	while (!m_stop)
 	{
 		//deal pause operate
 		pauseOrResum();
-
 		std::shared_ptr<MediaPacket> audio_pkt;
 		//get audio pkt frome queue
 		{
+			
+
 			std::unique_lock<std::mutex> audio_que_loker(m_pkt_audio_queue_mutex);
 			m_pkt_audio_condition_variable.wait(audio_que_loker, [this]() {
 				if (!m_audio_packet_queue.empty())
@@ -403,80 +429,65 @@ void MediaPlayer::audio_decode_thread()
 					}
 
 				}
-				});
+			});
 			//解码完成，退出解码线程
 			if (m_audio_decode_finish)
 			{
+				//刷新解码器缓存
+				std::shared_ptr<MediaPacket> FlushPkt = std::make_shared<MediaPacket>();
+				FlushPkt->m_pakcet->data = NULL;
+				FlushPkt->m_pakcet->size = 0;
+				decode(FlushPkt);
 				printf("audio_decodec thread finished..................\n");
 				break;
 			}
-
 			audio_pkt = m_audio_packet_queue.front();
 			m_audio_packet_queue.pop_front();
 		}
-
-		//deal audio decode
-			
-		int complete = 0;
-		do
-		{
-			std::shared_ptr<MediaFrame> media_frame = std::make_shared<MediaFrame>();
-			int ret = avcodec_decode_audio4(m_audio_AVCodecContext, media_frame->m_frame, &complete, audio_pkt->m_pakcet);
-			if (ret < 0)
-			{
-				break;
-			}
-			if (complete)
-			{
-				/*
-				time_t t = time(0);
-				char ch[64];
-				strftime(ch, sizeof(ch), "%Y-%m-%d %H-%M-%S", localtime(&t)); //年-月-日 时-分-秒
-				printf("Time:%s【audio_decode_thread】avcodec_decode_audio4 ,m_frame pts is:%lld, pkt_pts:%lld\n", ch, media_frame->m_frame->pts, media_frame->m_frame->pkt_pts);
-				*/
-				std::lock_guard<std::mutex> locker(m_audio_frame_queue_mutex);
-				m_audio_frame_queue.push_back(media_frame);
-				printf("【audio_decode_thread】m_frame_audio_condition_varible notify_one\n");
-				m_frame_audio_condition_varible.notify_one();
-
-				int size = av_get_bytes_per_sample((AVSampleFormat)media_frame->m_frame->format);
-				static FILE *fd = nullptr;
-				if (fd == nullptr)
-				{
-					fd = fopen("D:/origin.PCM","wb");
-				}
-
-				if (fd)
-				{
-					for (int i = 0; i < media_frame->m_frame->nb_samples; i++)
-					{
-						for (int ch = 0; ch < media_frame->m_frame->channels; ch++)
-						{
-							fwrite(media_frame->m_frame->data[ch] + size*i, 1, size, fd);
-							//fflush(fd);
-						}
-					}
-				}
-			}
-			audio_pkt->m_pakcet->size = audio_pkt->m_pakcet->size - ret;
-			audio_pkt->m_pakcet->data = audio_pkt->m_pakcet->data + ret;
-		} while (audio_pkt->m_pakcet->size > 0);
-
-		
+		decode(audio_pkt);
 	}
+	
+
 	printf("[finished]:void MediaPlayer::audio_decode_thread()\n");
 }
 
 void MediaPlayer::video_decode_thread()
 {
+	auto decode = [this](std::shared_ptr<MediaPacket> video_pkt) {
+		//deal video decode
+		int complete = 0;
+		do
+		{
+			std::shared_ptr<MediaFrame> media_frame = std::make_shared<MediaFrame>();
+			if (!media_frame->m_frame)
+			{
+				continue;
+			}
+			int ret = avcodec_decode_video2(m_video_AVCodecContext, media_frame->m_frame, &complete, video_pkt->m_pakcet);
+			if (ret < 0)
+			{
+				break;//跳出内循环
+			}
+			else
+			{
+				if (complete)
+				{
+					std::lock_guard<std::mutex> locker(m_video_frame_queue_mutex);
+					m_video_frame_queue.push_back(media_frame);
+				}
+				video_pkt->m_pakcet->data = video_pkt->m_pakcet->data + ret;
+				video_pkt->m_pakcet->size = video_pkt->m_pakcet->size - ret;
+			}
+		} while (video_pkt->m_pakcet->size > 0);
+	};
+
 	while (!m_stop)
 	{
 		//deal pause operate
 		pauseOrResum();
-		printf("【video_decode_thread】after pauseOrResum\n");
 		std::shared_ptr<MediaPacket> video_pkt;
-		//get video pkt frome queue
 		{
+			
 			std::unique_lock<std::mutex> video_pkt_que_loker(m_pkt_video_queue_mutex);
 			m_pkt_vidoe_condition_variable.wait(video_pkt_que_loker, [this]() {
 				if (!m_video_packet_queue.empty())
@@ -495,48 +506,25 @@ void MediaPlayer::video_decode_thread()
 						return false;
 					}
 				}
-				});
+			});
 			//视频解码完成
 			if (m_video_decode_finish)
 			{
 				printf("video_decode_thread thread finished..................................\n");
+				//flush 视频解码器缓存
+				std::shared_ptr<MediaPacket> pkt = std::make_shared<MediaPacket>();
+				pkt->m_pakcet->data = NULL;
+				pkt->m_pakcet->size = 0;
+				decode(pkt);
 				break;
 			}
+
 			video_pkt = m_video_packet_queue.front();
 			m_video_packet_queue.pop_front();
 		}
-
-		//deal video decode
-		int complete = 0;
-		do
-		{
-			std::shared_ptr<MediaFrame> media_frame = std::make_shared<MediaFrame>();
-			int ret = avcodec_decode_video2(m_video_AVCodecContext, media_frame->m_frame, &complete, video_pkt->m_pakcet);
-			if (ret < 0)
-			{
-				break;//跳出内循环
-			}
-			else
-			{
-				if (complete)
-				{
-					/*
-					time_t t = time(0);
-					char ch[64];
-					strftime(ch, sizeof(ch), "%Y-%m-%d %H-%M-%S", localtime(&t)); //年-月-日 时-分-秒
-					printf("Time:%s【video_decode_thread】avcodec_decode_video2 ,m_frame pts is:%lld, pkt_pts:%lld\n", ch, media_frame->m_frame->pts, media_frame->m_frame->pkt_pts);
-					*/
-					std::lock_guard<std::mutex> locker(m_video_frame_queue_mutex);
-					m_video_frame_queue.push_back(media_frame);
-					m_frame_video_condition_varible.notify_one();
-					printf("【video_decode_thread】m_frame_video_condition_varible.notify_one()\n");
-				}
-				video_pkt->m_pakcet->data = video_pkt->m_pakcet->data + ret;
-				video_pkt->m_pakcet->size = video_pkt->m_pakcet->size - ret;
-			}
-		} while (video_pkt->m_pakcet->size > 0);
+		decode(video_pkt);
 	}
-
+	
 	printf("[finished]:void MediaPlayer::video_decode_thread()\n");
 }
 
@@ -545,43 +533,82 @@ void MediaPlayer::render_video_thread()
 {
 	int frameSize = av_image_get_buffer_size(AV_PIX_FMT_YUV420P, m_video_AVCodecContext->width, m_video_AVCodecContext->height, 1);
 	uint8_t* buffer = (uint8_t*)av_malloc(frameSize);//指向YUV420的数据部分
+
+	static double m_previous_pts_diff = 40e-3;
+	static double m_previous_pts = 0;
+	static bool m_first_frame = true;
+	double delay_until_next_wake;
 	while (!m_stop)
 	{
-		pauseOrResum();
-		printf("【render_video_thread】after pauseOrResum\n");
-
-		std::shared_ptr<MediaFrame> video_frame;
+		bool late_first_frame = false;
+		pauseOrResum();		
+		if (m_video_decode_finish)
 		{
-			std::unique_lock<std::mutex> locker(m_video_frame_queue_mutex);
-			m_frame_video_condition_varible.wait(locker, [this]() {
-				if (!m_video_frame_queue.empty())
-				{
-					return true;
-				}
-				else
-				{
-					return m_video_decode_finish;
-				}
-				});
-			if (m_video_decode_finish)
-			{
-				break;
-			}
-			video_frame = m_video_frame_queue.front();
-			m_video_frame_queue.pop_front();
+			break;
 		}
 
-		printf("【render_video_thread】after m_frame_audio_condition_varible wait\n");
-		/*
-		time_t t = time(0);
-		char ch[64];
-		strftime(ch, sizeof(ch), "%Y-%m-%d %H-%M-%S", localtime(&t)); //年-月-日 时-分-秒
-		printf("Time:%s【render_thread】-----m_video_frame_queue.pop\n", ch);
-		*/
+		std::unique_lock<std::mutex> locker(m_video_frame_queue_mutex);
+		if (m_video_frame_queue.empty())
+		{
+			locker.unlock();
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			continue;
+		}
+		std::shared_ptr<MediaFrame> video_frame = m_video_frame_queue.front();
+		m_video_frame_queue.pop_front();
+		locker.unlock();
 
-		std::shared_ptr<MediaFrame> yuv_frame = std::make_shared<MediaFrame>();
+		auto videoPts = video_frame->m_frame->best_effort_timestamp * av_q2d(m_video_AVStream->time_base);
+		double pts_diff = videoPts - m_previous_pts;
+		if (m_first_frame)
+		{
+			late_first_frame = pts_diff >= 1.0;
+			m_first_frame = false;
+		}
+		if (pts_diff <= 0 || late_first_frame)
+		{
+			pts_diff = m_previous_pts_diff;
+		}
+		m_previous_pts_diff = pts_diff;
+		m_previous_pts = videoPts;
+
+		auto delay = av_gettime() - m_current_aduio_render_time;//渲染到现在为止的延迟
+		int currentPts = m_audio_current_pts + delay;//当前音频的播放pts
+		auto diff = videoPts - currentPts;//【计算视频帧pts与当前音频帧pts的差值，使用这个值来判断是否要展示当前的视频帧】
+		double sync_threshold;
+
+		//更新阈值
+		sync_threshold = (pts_diff > AV_SYNC_THRESHOLD)
+			? pts_diff : AV_SYNC_THRESHOLD;
+		
+		//修正pts_diff
+		if (abs(diff)< AV_NOSYNC_THRESHOLD)
+		{
+			if (diff < - sync_threshold)//如果diff小于0（表明视频帧落后），且超出了阈值，则立即播放
+			{
+				pts_diff = 0;
+			}else if (diff > sync_threshold)//diff大于阈值，则表明当前视频帧没有放完,则延迟两个pts_diff
+			{
+				pts_diff = 2 * pts_diff;
+			}
+		}
+		m_theoretical_render_video_time += pts_diff;
+	
+		delay_until_next_wake = m_theoretical_render_video_time - (av_gettime() / 1000000.0L);
+		if (delay_until_next_wake < 0.010L)
+		{
+			delay_until_next_wake = 0.010L;
+		}
+
+		printf("render video delay:%lf\n", delay_until_next_wake);
+		auto wake_tp = std::chrono::high_resolution_clock::now()
+			+ std::chrono::duration<int, std::micro>((int)(delay_until_next_wake * 1000000 +500));
+		
+		std::this_thread::sleep_until(wake_tp);
+
+
+		std::shared_ptr<MediaFrame> yuv_frame = std::make_shared<MediaFrame>();	
 		//将yuv_frame->m_frame->data数组指向buffer，并按照codecContext和AVPixelFormat决定data指针数组各个成员的指向
-
 		av_image_fill_arrays(yuv_frame->m_frame->data,           // dst data[]
 			yuv_frame->m_frame->linesize,						// dst linesize[]
 			buffer,												// src buffer
@@ -601,11 +628,45 @@ void MediaPlayer::render_video_thread()
 			video_frame->m_frame->height,		// src slice height
 			yuv_frame->m_frame->data,			// dst planes
 			yuv_frame->m_frame->linesize);		// dst strides		
-		printf("【render_video_thread】invokeMethod\n");
-			//use QApplication::instance() raplace m_renderRceiveObj because it may invoke by  mutilthread. when it destruct will crash
+	
+		static FILE * yuv = nullptr;
+		if (yuv == nullptr)
+		{
+			yuv = fopen("C:/Users/ChengKeKe/Desktop/player420.yuv", "wb");
+		}
+
+// 		for (int j = 0; j < yuv_frame->m_frame->height; j++)//每个像素都保存一个Y，每行都采集
+// 			fwrite(yuv_frame->m_frame->data[0] + j * yuv_frame->m_frame->linesize[0], yuv_frame->m_frame->width, 1, yuv);
+// 		for (int j = 0; j < yuv_frame->m_frame->height / 2; j++)//隔行采集(height/2)，每两个Y采集一个U(width/2),
+// 			fwrite(yuv_frame->m_frame->data[1] + j * yuv_frame->m_frame->linesize[1], yuv_frame->m_frame->width / 2, 1, yuv);
+// 		for (int j = 0; j < yuv_frame->m_frame->height / 2; j++)//隔行采集(height/2)，每两个Y采集一个V((width/2))
+// 			fwrite(yuv_frame->m_frame->data[2] + j * yuv_frame->m_frame->linesize[2], yuv_frame->m_frame->width / 2, 1, yuv);
+
+		uint8_t *ypoint = yuv_frame->m_frame->data[0];
+		for (int i=0; i< yuv_frame->m_frame->height; i++)
+		{
+			fwrite(ypoint,yuv_frame->m_frame->width,1,yuv) ;
+			ypoint = ypoint + yuv_frame->m_frame->linesize[0];
+		}
+		uint8_t *upoint = yuv_frame->m_frame->data[1];
+		for (int i = 0; i < yuv_frame->m_frame->height/2; i++)
+		{
+			fwrite(upoint, yuv_frame->m_frame->width/2, 1, yuv);
+			upoint = upoint + yuv_frame->m_frame->linesize[1];
+		}
+
+		uint8_t *vpoint = yuv_frame->m_frame->data[2];
+		for (int i = 0; i < yuv_frame->m_frame->height / 2; i++)
+		{
+			fwrite(vpoint, yuv_frame->m_frame->width / 2, 1, yuv);
+			vpoint = vpoint + yuv_frame->m_frame->linesize[2];
+		}
+		fflush(yuv);
+		//use QApplication::instance() raplace m_renderRceiveObj because it may invoke by  mutilthread. when it destruct will crash
 		QMetaObject::invokeMethod(QApplication::instance(), [=]() {
 			m_renderReceiveObj->updateImage(yuv_frame);
 			}, Qt::QueuedConnection);
+	
 	}
 	av_free(buffer);
 	printf("[finished]:void MediaPlayer::render_video_thread()\n");
@@ -616,103 +677,72 @@ void MediaPlayer::render_audio_thread()
 	while (!m_stop)
 	{
 		pauseOrResum();
-		printf("【render_audio_thread】after pauseOrResum\n");
 		bool late_first_frame = false;
-		//audio
-		std::shared_ptr<MediaFrame> audio_frame;
+		std::unique_lock<std::mutex> locker(m_audio_frame_queue_mutex);
+		static double m_previous_pts_diff = 40e-3;
+		static bool m_first_frame = true;
+		if (!m_audio_frame_queue.empty())
 		{
-			std::unique_lock<std::mutex> locker(m_audio_frame_queue_mutex);
-			m_frame_audio_condition_varible.wait(locker, [this]() {
-				if (!m_audio_frame_queue.empty())
-				{
-					return true;
-				}
-				else
-				{
-					return m_audio_decode_finish;
-				}
-				});
-			if (m_audio_decode_finish)
+			std::shared_ptr<MediaFrame> audio_frame = m_audio_frame_queue.front();
+			m_audio_frame_queue.pop_front();
+			locker.unlock();
+
+			m_audio_current_pts = audio_frame->m_frame->best_effort_timestamp * av_q2d(m_audio_AVStream->time_base);
+			// the amount of time until we need to display this frame
+			double diff = m_audio_current_pts - m_previous_audio_pts;
+			if (m_first_frame)
 			{
-				break;
+				late_first_frame = diff >= 1.0;
+				m_first_frame = false;
 			}
-			audio_frame = m_audio_frame_queue.front();
-			m_audio_frame_queue.pop_front();	
+
+			if (diff <= 0 || late_first_frame)
+			{// if diff is invalid, use previous
+				diff = m_previous_pts_diff;
+			}
+
+			// save for next time
+			m_previous_audio_pts = m_audio_current_pts;
+			m_previous_pts_diff = diff;
+
+			m_theoretical_render_audio_time += diff;//理论上应该渲染的time_point
+			double timeDiff = m_theoretical_render_audio_time - (av_gettime() / 1000000.0L);
+
+			if (timeDiff < 0.010L)
+			{
+				timeDiff = 0.01L;
+			}
+
+			if (timeDiff > diff)
+			{
+				timeDiff = diff;
+			}
+
+			//printf("audio frame will delay:%lf \n", timeDiff);
+			auto wake_tp = std::chrono::high_resolution_clock::now()
+				+ std::chrono::duration<int, std::micro>((int)(timeDiff * 1000000));
+
+			std::this_thread::sleep_until(wake_tp);
+
+			int32_t bytes_per_sample = av_get_bytes_per_sample((enum AVSampleFormat)audio_frame->m_frame->format);
+			int32_t size = audio_frame->m_frame->nb_samples * bytes_per_sample * audio_frame->m_frame->channels;
+			char* data = av_pcm_clone(audio_frame->m_frame);
+			m_current_aduio_render_time = av_gettime();
+			SDL_QueueAudio(m_currentAudioDeviceId, data, size);
+			free((void*)data);
 		}
-		printf("【render_audio_thread】after m_frame_audio_condition_varible wait\n");
-
-		int32_t bytes_per_sample = av_get_bytes_per_sample((enum AVSampleFormat)audio_frame->m_frame->format);
-		int32_t size = audio_frame->m_frame->nb_samples * bytes_per_sample * audio_frame->m_frame->channels;
-
-		static FILE* g_file = nullptr;
-
-		if (g_file == nullptr)
+		else
 		{
-			g_file = fopen("D:/test.pcm", "wb");
+			locker.unlock();
+			//printf("audio frame_queue is empty\n");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
-		char* data = av_pcm_clone(audio_frame->m_frame);
-		if (g_file)
+		if (m_audio_decode_finish)
 		{
-			fwrite(data, size, 1, g_file);
-		}
-		printf("【render_audio_thread】\n");
-		SDL_QueueAudio(m_currentAudioDeviceId, data, size);
-		free((void*)data);
-
-
-		static double m_previous_pts = 0;
-		double pts = audio_frame->m_frame->best_effort_timestamp * av_q2d(m_audio_AVStream->time_base);
-		double diff = pts - m_previous_pts;
-
-		//printf("audio pts is:%lf, audio with previous frame pts diff is:%lf \n", pts, diff);
-
-		static auto prevoiusTime = std::chrono::system_clock::now();
-		auto currentTime = std::chrono::system_clock::now();
-
-		std::chrono::milliseconds mill = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - prevoiusTime);
-		prevoiusTime = currentTime;
-		//printf("system time is:%s, system time with previous time is:%lld\n", time_in_HH_MM_SS_MMM().c_str(), mill);
-		if (m_first_frame)
-		{
-			late_first_frame = diff >= 1.0;
-			m_first_frame = false;
-		}
-
-		if (diff <= 0 || late_first_frame)
-		{
-			diff = m_previous_pts_diff;
-		}
-
-		m_previous_pts = pts;
-		m_previous_pts_diff = diff;
-
-		m_will_render_audio_time += diff;//理论上应该渲染的time_point
-		double timeDiff = m_will_render_audio_time - (av_gettime() / 1000000.0L);
-
-		if (timeDiff < 0.010L)
-		{
-			timeDiff = 0.01L;
-		}
-
-		if (timeDiff > diff)
-		{
-			timeDiff = diff;
-		}
-
-		//printf("audio frame will delay:%lf \n", timeDiff);
-		auto wake_tp = std::chrono::high_resolution_clock::now()
-			+ std::chrono::duration<int, std::micro>((int)(timeDiff * 1000000));
-
-		std::this_thread::sleep_until(wake_tp);	
+			break;
+		}		
 	}
 	printf("[finished]:void MediaPlayer::render_audio_thread()\n");
-}
-
-
-void MediaPlayer::sdlAudioCallBackFunc(void* userdata, Uint8* stream, int len)
-{
-	MediaPlayer* obj = static_cast<MediaPlayer*>(userdata);
-	int len1, audio_data_size;
 }
 
 void MediaPlayer::pauseOrResum()

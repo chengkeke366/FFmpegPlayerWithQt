@@ -21,14 +21,12 @@ extern "C"
 #include <deque>
 #include <vector>
 #include <list>
-#include <QObject>
 #include "SDLRenderWidget.h"
 
 struct SwsContext;
 
-class MediaPlayer:public QObject
+class MediaPlayer
 {
-	Q_OBJECT
 public:
     MediaPlayer();
     ~MediaPlayer();
@@ -52,12 +50,9 @@ private:
 	void demux_thread();
 	void audio_decode_thread();
 	void video_decode_thread();
-	void render_video_thread();
 	void render_audio_thread();
+	void render_video_thread();
 
-	static void sdlAudioCallBackFunc(void *userdata, Uint8 *stream, int len);
-signals:
-	void readReady(std::shared_ptr<MediaFrame> frame);
 private:
     AVFormatContext * m_AVFormatContext;
 	AVCodecContext  * m_video_AVCodecContext;
@@ -75,8 +70,8 @@ private:
 
 	std::deque<std::shared_ptr<MediaPacket>> m_video_packet_queue;
 	std::deque<std::shared_ptr<MediaPacket>> m_audio_packet_queue;
-	std::deque<std::shared_ptr<MediaFrame>> m_audio_frame_queue;
-	std::deque<std::shared_ptr<MediaFrame>> m_video_frame_queue;
+	std::deque<std::shared_ptr<MediaFrame>>  m_audio_frame_queue;
+	std::deque<std::shared_ptr<MediaFrame>>  m_video_frame_queue;
 	
 	std::mutex   m_pkt_audio_queue_mutex;
 	std::mutex   m_pkt_video_queue_mutex;
@@ -92,7 +87,7 @@ private:
 	std::condition_variable m_demuex_condition_variable;
 	std::condition_variable m_pkt_audio_condition_variable;
 	std::condition_variable m_pkt_vidoe_condition_variable;
-	std::condition_variable m_frame_audio_condition_varible;
+	
 	std::condition_variable m_frame_video_condition_varible;
 	
 	bool m_demux_finish = false;
@@ -101,9 +96,11 @@ private:
 
 	bool m_stop = false;
 	PlayStatus m_playStatus = None;
-	double m_will_render_audio_time;
-	double m_previous_pts_diff = 40e-3;
-	bool m_first_frame = true; 
+	double m_theoretical_render_audio_time;//理论下一帧渲染时间点
+	double m_theoretical_render_video_time;//理论下一帧渲染时间点
+	double m_current_aduio_render_time;//开始渲染音频帧的时间
+	double m_previous_audio_pts = 0;
+	double m_audio_current_pts = 0;
 };
 
 

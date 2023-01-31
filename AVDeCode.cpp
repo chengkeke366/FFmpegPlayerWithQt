@@ -21,7 +21,11 @@ int AVDeCode::init(MeidaStream *stream) {
     avcodec_parameters_to_context(m_avCodecContext,stream->m_codecPar);
     AVCodec *codec= avcodec_find_decoder(m_avCodecContext->codec_id);
 
-    auto ret = avcodec_open2(m_avCodecContext,codec,nullptr);
+	AVDictionary *opts = NULL;
+	char refcount = 1;
+	av_dict_set(&opts, "refcounted_frames", &refcount, 0);
+
+    auto ret = avcodec_open2(m_avCodecContext,codec, &opts);
     if (ret)
     {
         printf("open codec error");
