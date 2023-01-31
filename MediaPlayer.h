@@ -46,6 +46,8 @@ public:
 	void registerRenderWindowsCallback(SDLRenderWidget *receiver);
 private:
 	void pauseOrResum();
+  bool open_file(const char* filename);
+  void close_file();
 
 	void demux_thread();
 	void audio_decode_thread();
@@ -54,12 +56,13 @@ private:
 	void render_video_thread();
 
 private:
-    AVFormatContext * m_AVFormatContext;
-	AVCodecContext  * m_video_AVCodecContext;
-	AVStream        * m_video_AVStream;
-	AVCodecContext  * m_audio_AVCodecContext;
-	AVStream        * m_audio_AVStream;
-	struct SwsContext*  m_sws_ctx = NULL;
+  AVFormatContext* m_AVFormatContext{ nullptr };
+  AVCodecContext* m_video_AVCodecContext{ nullptr };
+  AVStream* m_video_AVStream{ nullptr };
+  AVCodecContext* m_audio_AVCodecContext{ nullptr };
+  AVStream* m_audio_AVStream{ nullptr };
+  struct SwsContext* m_sws_ctx{ nullptr };
+
 
 	std::thread  m_demux_thread;
 	std::thread  m_video_decode_thread;

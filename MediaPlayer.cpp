@@ -6,8 +6,7 @@
 #include "MediaFrame.h"
 #include <assert.h>
 
-extern  "C"
-{
+extern  "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
@@ -58,8 +57,7 @@ std::string time_in_HH_MM_SS_MMM()
 
 	return oss.str();
 }
-static short
-format_convert(int format)
+static short format_convert(int format)
 {
 	short sdl_format = false;
 	switch (format)
@@ -90,38 +88,37 @@ format_convert(int format)
 }
 
 
-char*
-av_pcm_clone(AVFrame* frame)
+char* av_pcm_clone(AVFrame* frame)
 {
-	assert(NULL != frame);
+  assert(NULL != frame);
 
-	int32_t bytes_per_sample = av_get_bytes_per_sample((enum AVSampleFormat)frame->format);
-	char* p_cur_ptr = NULL, * pcm_data = NULL;
-	if (bytes_per_sample <= 0)
-		return NULL;
+  int32_t bytes_per_sample = av_get_bytes_per_sample((enum AVSampleFormat)frame->format);
+  char* p_cur_ptr = NULL, * pcm_data = NULL;
+  if (bytes_per_sample <= 0)
+    return NULL;
 
+  int32_t frame_size = frame->channels * frame->nb_samples * bytes_per_sample;
 
-	// 1.For packet sample foramt and 1 channel,we just store pcm data in byte order.
-	if ((1 == frame->channels)
-		|| (frame->format >= AV_SAMPLE_FMT_U8 && frame->format <= AV_SAMPLE_FMT_DBL))
-	{//linesize[0] maybe 0 or has padding bits,so calculate the real size by ourself.		
-		int32_t frame_size = frame->channels * frame->nb_samples * bytes_per_sample;
-		p_cur_ptr = pcm_data = (char*)malloc(frame_size);
-		memcpy(p_cur_ptr, frame->data[0], frame_size);
-	}
-	else
-	{//2.For plane sample foramt, we must store pcm datas interleaved. [LRLRLR...LR].
-		int32_t frame_size = frame->channels * frame->nb_samples * bytes_per_sample;
-		p_cur_ptr = pcm_data = (char*)malloc(frame_size);
-		for (int i = 0; i < frame->nb_samples; ++i)//nb_samples 每个样本的采样数，左右声道各采样
-		{
-			memcpy(p_cur_ptr, frame->data[0] + i * bytes_per_sample, bytes_per_sample);
-			p_cur_ptr += bytes_per_sample;
-			memcpy(p_cur_ptr, frame->data[1] + i * bytes_per_sample, bytes_per_sample);
-			p_cur_ptr += bytes_per_sample;
-		}
-	}
-	return pcm_data;
+  // 1.For packet sample foramt we just store pcm data in byte order.
+  if (!av_sample_fmt_is_planar((enum AVSampleFormat)frame->format))
+  {//linesize[0] maybe 0 or has padding bits,so calculate the real size by ourself.		
+
+    p_cur_ptr = pcm_data = (char*)malloc(frame_size);
+    memcpy(p_cur_ptr, frame->data[0], frame_size);
+  }
+  else
+  {//2.For plane sample foramt, we must store pcm datas interleaved. [LRLRLR...LR].
+    p_cur_ptr = pcm_data = (char*)malloc(frame_size);
+    for (int i = 0; i < frame->nb_samples; ++i)//nb_samples 每个样本的采样数，左右声道各采样
+    {
+      for (int j = 0; j < frame->channels; j++)
+      {
+        memcpy(p_cur_ptr, frame->data[j] + i * bytes_per_sample, bytes_per_sample);
+        p_cur_ptr += bytes_per_sample;
+      }
+    }
+  }
+  return pcm_data;
 }
 
 
@@ -134,107 +131,140 @@ MediaPlayer::~MediaPlayer() {
 	stop_play();
 }
 
+bool MediaPlayer::open_file(const char* filename)
+{
+  stop_play();
+
+  printf("avformat_open_input file:%s\n", filename);
+
+  m_AVFormatContext = avformat_alloc_context();
+  if (avformat_open_input(&m_AVFormatContext, filename, NULL, NULL) < 0) {
+    goto fail;
+  }
+
+  /* retrieve stream information */
+  if (avformat_find_stream_info(m_AVFormatContext, NULL) < 0) {
+    printf("Could not find stream information\n");
+    goto fail;
+  }
+
+  auto openDecode = [this](AVFormatContext* formartContext, AVCodecContext** codecContext, enum AVMediaType type)
+  {
+    int stream_index = av_find_best_stream(formartContext, type, -1, -1, NULL, 0);
+    if (stream_index < 0) {
+      return false;
+    }
+
+    AVStream* stream = formartContext->streams[stream_index];
+    if (type == AVMEDIA_TYPE_AUDIO)
+    {
+      m_audio_AVStream = stream;
+    }
+    else if (type == AVMEDIA_TYPE_VIDEO)
+    {
+      m_video_AVStream = stream;
+    }
+
+    AVCodec* dec = avcodec_find_decoder(stream->codecpar->codec_id);
+    if (!dec) {
+      fprintf(stderr, "Failed to find %s codec\n", av_get_media_type_string(AVMEDIA_TYPE_VIDEO));
+      return false;
+    }
+    else
+    {
+      *codecContext = avcodec_alloc_context3(dec);
+      if ((avcodec_parameters_to_context(*codecContext, stream->codecpar)) < 0) {
+        printf("Failed to copy %s codec parameters to decoder context\n");
+        return false;
+      }
+      //AVFrame生命周期不由编码器关闭，由用户自己管理。如果不设置这个选项，一些frame数据将会丢失导致画面或者声音异常
+      AVDictionary* opts = NULL;
+      av_dict_set(&opts, "refcounted_frames", "1", 0);
+      if (avcodec_open2(*codecContext, dec, &opts) < 0) {
+        printf("Failed to open %s codec\n");
+        return false;
+      }
+    }
+    return true;
+  };
+
+  //查找并打开解码器
+  if (!openDecode(m_AVFormatContext, &m_video_AVCodecContext, AVMEDIA_TYPE_VIDEO)) {
+    avcodec_free_context(&m_video_AVCodecContext);
+  }
+  else {
+    //     初始化SWS context，用于后续图像转换
+  //     此处第6个参数使用的是FFmpeg中的像素格式，对比参考注释B4
+  //     FFmpeg中的像素格式AV_PIX_FMT_YUV420P对应SDL中的像素格式SDL_PIXELFORMAT_IYUV
+  //     如果解码后得到图像的不被SDL支持，不进行图像转换的话，SDL是无法正常显示图像的
+  //     如果解码后得到图像的能被SDL支持，则不必进行图像转换
+  //     这里为了编码简便，统一转换为SDL支持的格式AV_PIX_FMT_YUV420P==>SDL_PIXELFORMAT_IYUV
+    m_sws_ctx = sws_getContext(
+      m_video_AVCodecContext->width,   // src width
+      m_video_AVCodecContext->height,   // src height
+      m_video_AVCodecContext->pix_fmt, // src format
+      m_video_AVCodecContext->width,	 // dst width
+      m_video_AVCodecContext->height,// dst height
+      AV_PIX_FMT_YUV420P,				// dst format
+      SWS_BICUBIC,					 // flags:使用何种算法进行转换。可参考https://blog.csdn.net/leixiaohua1020/article/details/12029505
+      NULL,
+      NULL,                  // dst filter
+      NULL                   // param
+    );
+  }
+
+
+  if (!openDecode(m_AVFormatContext, &m_audio_AVCodecContext, AVMEDIA_TYPE_AUDIO)) {
+    avcodec_free_context(&m_audio_AVCodecContext);
+  }
+  else {
+    SDL_AudioSpec spec;
+    spec.freq = m_audio_AVCodecContext->sample_rate;
+    spec.channels = (Uint8)m_audio_AVCodecContext->channels;
+    spec.format = format_convert(m_audio_AVCodecContext->sample_fmt);
+    spec.silence = (Uint8)0;
+    spec.samples = m_audio_AVCodecContext->frame_size;
+    spec.callback = NULL; //使用push方式
+
+    //开启SDL音频渲染
+    m_currentAudioDeviceId = m_renderReceiveObj->openAudioDevice(&spec);
+    m_current_aduio_render_time = (double)av_gettime() / 1000000.0;
+  }
+  return true;
+
+fail:
+  avformat_free_context(m_AVFormatContext);
+  return false;
+}
+
+void MediaPlayer::close_file() {
+  avformat_close_input(&m_AVFormatContext);
+}
+
 bool MediaPlayer::start_play(const char* file_name)
 {
 	stop_play();
+	if (!open_file(file_name)) {
+		return false;
+	}
 	m_stop = false;
-	printf("avformat_open_input file:%s\n", file_name);
-
-	m_AVFormatContext = avformat_alloc_context();
-	if (avformat_open_input(&m_AVFormatContext, file_name, NULL, NULL) < 0)
-	{
-		return false;
-	}
-
-	/* retrieve stream information */
-	if (avformat_find_stream_info(m_AVFormatContext, NULL) < 0)
-	{
-		printf("Could not find stream information\n");
-		return false;
-	}
-
-	auto openDecode = [this](AVFormatContext* formartContext, AVCodecContext** codecContext, enum AVMediaType type)
-	{
-		int stream_index = av_find_best_stream(formartContext, type, -1, -1, NULL, 0);
-		AVStream* stream;
-		if (type == AVMEDIA_TYPE_AUDIO)
-		{
-			m_audio_AVStream = stream = formartContext->streams[stream_index];
-		}
-		else if (type == AVMEDIA_TYPE_VIDEO)
-		{
-			m_video_AVStream = stream = formartContext->streams[stream_index];
-		}
-
-		AVCodec* dec = avcodec_find_decoder(stream->codecpar->codec_id);
-		if (!dec) {
-			fprintf(stderr, "Failed to find %s codec\n", av_get_media_type_string(AVMEDIA_TYPE_VIDEO));
-			return AVERROR(EINVAL);
-		}
-		else
-		{
-			bool ret;
-			*codecContext = avcodec_alloc_context3(dec);
-			if ((avcodec_parameters_to_context(*codecContext, stream->codecpar)) < 0)
-			{
-				printf("Failed to copy %s codec parameters to decoder context\n");
-			}
-			AVDictionary *opts = NULL;
-			//解码后的AVFrame归属调用者，否则属于解码器。属于解码器则在下一次调用解码函数时，则
-			av_dict_set(&opts, "refcounted_frames", "1", 0);
-
-			if ((ret = avcodec_open2(*codecContext, dec, &opts)) < 0) {
-				printf("Failed to open %s codec\n");
-			}
-		}
-	};
-
-	//查找并打开解码器
-	openDecode(m_AVFormatContext, &m_video_AVCodecContext, AVMEDIA_TYPE_VIDEO);
-	openDecode(m_AVFormatContext, &m_audio_AVCodecContext, AVMEDIA_TYPE_AUDIO);
-	//     初始化SWS context，用于后续图像转换
-	//     此处第6个参数使用的是FFmpeg中的像素格式，对比参考注释B4
-	//     FFmpeg中的像素格式AV_PIX_FMT_YUV420P对应SDL中的像素格式SDL_PIXELFORMAT_IYUV
-	//     如果解码后得到图像的不被SDL支持，不进行图像转换的话，SDL是无法正常显示图像的
-	//     如果解码后得到图像的能被SDL支持，则不必进行图像转换
-	//     这里为了编码简便，统一转换为SDL支持的格式AV_PIX_FMT_YUV420P==>SDL_PIXELFORMAT_IYUV
-
-	m_sws_ctx = sws_getContext(
-		m_video_AVCodecContext->width,   // src width
-		m_video_AVCodecContext->height,   // src height
-		m_video_AVCodecContext->pix_fmt, // src format
-		m_video_AVCodecContext->width,	 // dst width
-		m_video_AVCodecContext->height,// dst height
-		AV_PIX_FMT_YUV420P,				// dst format
-		SWS_BICUBIC,					 // flags:使用何种算法进行转换。可参考https://blog.csdn.net/leixiaohua1020/article/details/12029505
-		NULL,
-		NULL,                  // dst filter
-		NULL                   // param
-	);
-
-	SDL_AudioSpec spec;
-	spec.freq = m_audio_AVCodecContext->sample_rate;
-	spec.channels = (Uint8)m_audio_AVCodecContext->channels;
-	spec.format = format_convert(m_audio_AVCodecContext->sample_fmt);
-	spec.silence = (Uint8)0;
-	spec.samples = m_audio_AVCodecContext->frame_size;
-	spec.callback = NULL;
-	m_currentAudioDeviceId = m_renderReceiveObj->openAudioDevice(&spec);
-
-	m_theoretical_render_video_time = m_theoretical_render_audio_time = (double)av_gettime() / 1000000.0;//初始化时钟（获取当前系统时间，然后根据pts叠加到该时间上的方式进行同步）
 	//启动线程
 	m_demux_thread = std::thread(&MediaPlayer::demux_thread, this);
 	m_audio_decode_thread = std::thread(&MediaPlayer::audio_decode_thread, this);
 	m_video_decode_thread = std::thread(&MediaPlayer::video_decode_thread, this);
 	m_video_render_thread = std::thread(&MediaPlayer::render_video_thread, this);
 	m_audio_render_thread = std::thread(&MediaPlayer::render_audio_thread, this);
+	m_theoretical_render_video_time = m_theoretical_render_audio_time = (double)av_gettime() / 1000000.0;//初始化时钟（获取当前系统时间，然后根据pts叠加到该时间上的方式进行同步）
 	return true;
+
+fail:
+  avformat_free_context(m_AVFormatContext);
+  return false;
 }
 
 bool MediaPlayer::stop_play()
 {
 	m_stop = true;
-	m_playStatus = Stop;
 	m_pause_condition_variable.notify_all();
 	if (m_demux_thread.joinable())
 	{
@@ -266,6 +296,8 @@ bool MediaPlayer::stop_play()
 	m_video_frame_queue.clear();
 	m_video_frame_queue.clear();
 	m_audio_packet_queue.clear();
+	m_playStatus = Stop;
+	close_file();
 	return true;
 }
 
@@ -760,4 +792,3 @@ void MediaPlayer::pauseOrResum()
 		}
 		});
 }
-
